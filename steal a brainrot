@@ -1,161 +1,94 @@
+--// Services
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UIS = game:GetService("UserInputService")
+
 local player = Players.LocalPlayer
+local character = player.Character or player.CharacterAdded:Wait()
 
 local gui = Instance.new("ScreenGui", player:WaitForChild("PlayerGui"))
 gui.Name = "MainUtilityGUI"
 gui.ResetOnSpawn = false
 
 -- Variables
-local beam, att0, att1
-local beamUpdateConn
 local floatActive = false
 local floatBV
+local beam, att0, att1
+local beamUpdateConn
+local espEnabled = false
+local godModeEnabled = false
 
--- Create Toggle Button ("D")
+-- Toggle Button
 local toggleBtn = Instance.new("TextButton", gui)
-toggleBtn.Size = UDim2.new(0, 35, 0, 35)
-toggleBtn.Position = UDim2.new(0, 10, 0.5, -17)
+toggleBtn.Size = UDim2.new(0, 45, 0, 45)
+toggleBtn.Position = UDim2.new(0, 10, 0.5, -22)
 toggleBtn.BackgroundColor3 = Color3.new(0, 0, 0)
 toggleBtn.Text = "D"
 toggleBtn.Font = Enum.Font.GothamBlack
-toggleBtn.TextSize = 24
+toggleBtn.TextSize = 26
 toggleBtn.TextColor3 = Color3.fromRGB(0, 102, 255)
 Instance.new("UICorner", toggleBtn).CornerRadius = UDim.new(1, 0)
 
--- Drag function for UI (drag by whole frame)
-local function makeDraggable(frame, dragArea)
+-- Draggable UI function
+local function makeDraggable(frame, handle)
+	handle = handle or frame
 	local dragging, dragInput, dragStart, startPos
-	dragArea = dragArea or frame
-
-	dragArea.InputBegan:Connect(function(input)
+	handle.InputBegan:Connect(function(input)
 		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
 			dragging = true
 			dragStart = input.Position
 			startPos = frame.Position
 			input.Changed:Connect(function()
-				if input.UserInputState == Enum.UserInputState.End then
-					dragging = false
-				end
+				if input.UserInputState == Enum.UserInputState.End then dragging = false end
 			end)
 		end
 	end)
-
-	dragArea.InputChanged:Connect(function(input)
+	handle.InputChanged:Connect(function(input)
 		if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
 			dragInput = input
 		end
 	end)
-
 	UIS.InputChanged:Connect(function(input)
 		if input == dragInput and dragging then
 			local delta = input.Position - dragStart
-			frame.Position = UDim2.new(
-				startPos.X.Scale,
-				startPos.X.Offset + delta.X,
-				startPos.Y.Scale,
-				startPos.Y.Offset + delta.Y
-			)
+			frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
 		end
 	end)
 end
-
 makeDraggable(toggleBtn)
 
--- MAIN GUI
-local mainFrame = Instance.new("Frame", gui)
-mainFrame.Size = UDim2.new(0, 240, 0, 360)
-mainFrame.Position = UDim2.new(0, 60, 0.5, -180)
-mainFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
-mainFrame.Visible = false
-Instance.new("UICorner", mainFrame).CornerRadius = UDim.new(0, 14)
+-- Main GUI
+local main = Instance.new("Frame", gui)
+main.Size = UDim2.new(0, 210, 0, 250)
+main.Position = UDim2.new(0, 60, 0.5, -125)
+main.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+main.Visible = false
+Instance.new("UICorner", main).CornerRadius = UDim.new(0, 14)
 
--- Main GUI Top Bar (drag handle)
-local mainBar = Instance.new("Frame", mainFrame)
-mainBar.Size = UDim2.new(1, 0, 0, 30)
-mainBar.BackgroundColor3 = Color3.fromRGB(30,30,30)
+local mainBar = Instance.new("Frame", main)
+mainBar.Size = UDim2.new(1, 0, 0, 28)
+mainBar.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
 Instance.new("UICorner", mainBar).CornerRadius = UDim.new(0, 14)
 
-local mainTitle = Instance.new("TextLabel", mainBar)
-mainTitle.Size = UDim2.new(1, -10, 1, 0)
-mainTitle.Position = UDim2.new(0, 5, 0, 0)
-mainTitle.BackgroundTransparency = 1
-mainTitle.Text = "Made by Dorian and ChatGPT"
-mainTitle.TextColor3 = Color3.new(1,1,1)
-mainTitle.Font = Enum.Font.GothamBlack
-mainTitle.TextSize = 16
-mainTitle.TextXAlignment = Enum.TextXAlignment.Left
-mainTitle.TextYAlignment = Enum.TextYAlignment.Center
+local title = Instance.new("TextLabel", mainBar)
+title.Size = UDim2.new(1, -10, 1, 0)
+title.Position = UDim2.new(0, 5, 0, 0)
+title.Text = "Made by Dorian and ChatGPT"
+title.TextColor3 = Color3.new(1,1,1)
+title.Font = Enum.Font.GothamBlack
+title.TextSize = 15
+title.BackgroundTransparency = 1
+title.TextXAlignment = Enum.TextXAlignment.Left
 
-makeDraggable(mainFrame, mainBar)
+makeDraggable(main, mainBar)
 
--- Steal Button in Main GUI
-local stealBtn = Instance.new("TextButton", mainFrame)
-stealBtn.Size = UDim2.new(1, -20, 0, 50)
-stealBtn.Position = UDim2.new(0, 10, 0, 50)
-stealBtn.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
-stealBtn.TextColor3 = Color3.new(1,1,1)
-stealBtn.Font = Enum.Font.Gotham
-stealBtn.TextSize = 20
-stealBtn.Text = "Steal"
-Instance.new("UICorner", stealBtn).CornerRadius = UDim.new(0, 8)
-
--- ESP Button
-local espBtn = Instance.new("TextButton", mainFrame)
-espBtn.Size = UDim2.new(1, -20, 0, 50)
-espBtn.Position = UDim2.new(0, 10, 0, 120)
-espBtn.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
-espBtn.TextColor3 = Color3.new(1,1,1)
-espBtn.Font = Enum.Font.Gotham
-espBtn.TextSize = 20
-espBtn.Text = "ESP"
-Instance.new("UICorner", espBtn).CornerRadius = UDim.new(0, 8)
-
--- Close Button
-local closeBtn = Instance.new("TextButton", mainFrame)
-closeBtn.Size = UDim2.new(1, -20, 0, 50)
-closeBtn.Position = UDim2.new(0, 10, 0, 290)
-closeBtn.BackgroundColor3 = Color3.fromRGB(140, 20, 20)
-closeBtn.TextColor3 = Color3.new(1,1,1)
-closeBtn.Font = Enum.Font.Gotham
-closeBtn.TextSize = 20
-closeBtn.Text = "Close"
-Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0, 8)
-
--- STEAL GUI (initially hidden)
-local stealGUI = Instance.new("Frame", gui)
-stealGUI.Size = UDim2.new(0, 260, 0, 280)
-stealGUI.Position = UDim2.new(0, 320, 0.5, -140)
-stealGUI.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
-stealGUI.Visible = false
-Instance.new("UICorner", stealGUI).CornerRadius = UDim.new(0, 14)
-
-local stealBar = Instance.new("Frame", stealGUI)
-stealBar.Size = UDim2.new(1, 0, 0, 30)
-stealBar.BackgroundColor3 = Color3.fromRGB(30,30,30)
-Instance.new("UICorner", stealBar).CornerRadius = UDim.new(0, 14)
-
-local stealTitle = Instance.new("TextLabel", stealBar)
-stealTitle.Size = UDim2.new(1, -10, 1, 0)
-stealTitle.Position = UDim2.new(0, 5, 0, 0)
-stealTitle.BackgroundTransparency = 1
-stealTitle.Text = "Steal Controls"
-stealTitle.TextColor3 = Color3.new(1,1,1)
-stealTitle.Font = Enum.Font.GothamBlack
-stealTitle.TextSize = 16
-stealTitle.TextXAlignment = Enum.TextXAlignment.Left
-stealTitle.TextYAlignment = Enum.TextYAlignment.Center
-
-makeDraggable(stealGUI, stealBar)
-
--- Steal GUI Buttons: Float, Sky, Ground
-local function createStealButton(text, y)
-	local b = Instance.new("TextButton", stealGUI)
-	b.Size = UDim2.new(1, -20, 0, 50)
-	b.Position = UDim2.new(0, 10, 0, y)
+-- Create Main Buttons
+local function createMainBtn(text, posY)
+	local b = Instance.new("TextButton", main)
+	b.Size = UDim2.new(1, -20, 0, 38)
+	b.Position = UDim2.new(0, 10, 0, posY)
 	b.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
-	b.TextColor3 = Color3.new(1,1,1)
+	b.TextColor3 = Color3.new(1, 1, 1)
 	b.Font = Enum.Font.Gotham
 	b.TextSize = 20
 	b.Text = text
@@ -163,153 +96,166 @@ local function createStealButton(text, y)
 	return b
 end
 
-local floatBtn = createStealButton("Float", 50)
-local skyBtn = createStealButton("Sky", 120)
-local groundBtn = createStealButton("Ground", 190)
+local stealBtn = createMainBtn("Steal", 40)
+local espBtn = createMainBtn("ESP", 85)
+local godBtn = createMainBtn("God Mode", 130)
+local closeBtn = createMainBtn("Close", 175)
+closeBtn.BackgroundColor3 = Color3.fromRGB(140, 20, 20)
 
--- Toggle Main GUI visibility by Toggle Button
-toggleBtn.MouseButton1Click:Connect(function()
-	mainFrame.Visible = not mainFrame.Visible
-end)
+-- Steal GUI
+local steal = Instance.new("Frame", gui)
+steal.Size = UDim2.new(0, 210, 0, 200)
+steal.Position = UDim2.new(0, 280, 0.5, -100)
+steal.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+steal.Visible = false
+Instance.new("UICorner", steal).CornerRadius = UDim.new(0, 14)
 
--- Open/close Steal GUI
-stealBtn.MouseButton1Click:Connect(function()
-	stealGUI.Visible = not stealGUI.Visible
-end)
+local stealBar = Instance.new("Frame", steal)
+stealBar.Size = UDim2.new(1, 0, 0, 28)
+stealBar.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+Instance.new("UICorner", stealBar).CornerRadius = UDim.new(0, 14)
 
-closeBtn.MouseButton1Click:Connect(function()
-	mainFrame.Visible = false
-	if floatActive then
-		floatActive = false
-		if floatBV then
-			floatBV:Destroy()
-			floatBV = nil
-		end
-		floatBtn.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
+local stealTitle = Instance.new("TextLabel", stealBar)
+stealTitle.Size = UDim2.new(1, -10, 1, 0)
+stealTitle.Position = UDim2.new(0, 5, 0, 0)
+stealTitle.Text = "Steal Controls"
+stealTitle.TextColor3 = Color3.new(1,1,1)
+stealTitle.Font = Enum.Font.GothamBlack
+stealTitle.TextSize = 15
+stealTitle.BackgroundTransparency = 1
+stealTitle.TextXAlignment = Enum.TextXAlignment.Left
+
+makeDraggable(steal, stealBar)
+
+-- Steal Buttons
+local function createStealBtn(text, posY)
+	local b = Instance.new("TextButton", steal)
+	b.Size = UDim2.new(1, -20, 0, 40)
+	b.Position = UDim2.new(0, 10, 0, posY)
+	b.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
+	b.TextColor3 = Color3.new(1, 1, 1)
+	b.Font = Enum.Font.Gotham
+	b.TextSize = 20
+	b.Text = text
+	Instance.new("UICorner", b).CornerRadius = UDim.new(0, 8)
+	return b
+end
+
+local floatBtn = createStealBtn("Float", 40)
+local skyBtn = createStealBtn("Sky", 90)
+local groundBtn = createStealBtn("Ground", 140)
+
+-- God Mode
+local function enableGodMode()
+	local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+	if hum then
+		hum.Health = hum.MaxHealth
+		hum:GetPropertyChangedSignal("Health"):Connect(function()
+			if godModeEnabled then
+				hum.Health = hum.MaxHealth
+			end
+		end)
 	end
+end
+
+godBtn.MouseButton1Click:Connect(function()
+	godModeEnabled = not godModeEnabled
+	godBtn.BackgroundColor3 = godModeEnabled and Color3.fromRGB(0,170,0) or Color3.fromRGB(70,70,70)
+	if godModeEnabled then enableGodMode() end
 end)
 
--- FLOAT Logic
-floatBtn.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
+-- Float
 floatBtn.MouseButton1Click:Connect(function()
 	local char = player.Character
 	local hrp = char and char:FindFirstChild("HumanoidRootPart")
 	if not char or not hrp then return end
 
+	floatActive = not floatActive
+	floatBtn.BackgroundColor3 = floatActive and Color3.fromRGB(0, 170, 0) or Color3.fromRGB(70, 70, 70)
+
 	if floatActive then
-		floatActive = false
-		floatBtn.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
-		if floatBV then
-			floatBV:Destroy()
-			floatBV = nil
-		end
-	else
-		floatActive = true
-		floatBtn.BackgroundColor3 = Color3.fromRGB(0, 170, 0)
-		if not floatBV then
-			floatBV = Instance.new("BodyVelocity")
-			floatBV.MaxForce = Vector3.new(0, math.huge, 0)
-			floatBV.Velocity = Vector3.new(0, 15, 0)
-			floatBV.Parent = hrp
-		end
+		floatBV = Instance.new("BodyVelocity")
+		floatBV.Velocity = Vector3.new(0, 15, 0)
+		floatBV.MaxForce = Vector3.new(0, math.huge, 0)
+		floatBV.Parent = hrp
 
-		local connection
-		connection = RunService.Heartbeat:Connect(function()
-			if not floatActive or not hrp or not floatBV then
-				connection:Disconnect()
-				return
+		task.spawn(function()
+			while floatActive and hrp do
+				RunService.Heartbeat:Wait()
+				local rayOrigin = hrp.Position + Vector3.new(0, 2, 0)
+				local rayDirection = Vector3.new(0, 3, 0)
+				local rayParams = RaycastParams.new()
+				rayParams.FilterDescendantsInstances = {char}
+				rayParams.FilterType = Enum.RaycastFilterType.Blacklist
+
+				local result = workspace:Raycast(rayOrigin, rayDirection, rayParams)
+				if result then
+					floatBV.Velocity = Vector3.new(0, 0, 0)
+				else
+					floatBV.Velocity = Vector3.new(0, 15, 0)
+				end
 			end
-
-			-- Raycast above head to detect ceiling (3 studs)
-			local rayOrigin = hrp.Position + Vector3.new(0, 2, 0)
-			local rayDirection = Vector3.new(0, 3, 0)
-			local raycastParams = RaycastParams.new()
-			raycastParams.FilterDescendantsInstances = {char}
-			raycastParams.FilterType = Enum.RaycastFilterType.Blacklist
-
-			local result = workspace:Raycast(rayOrigin, rayDirection, raycastParams)
-			if result then
-				floatBV.Velocity = Vector3.new(0, 0, 0)
-			else
-				floatBV.Velocity = Vector3.new(0, 15, 0)
-			end
+			if floatBV then floatBV:Destroy() end
 		end)
+	else
+		if floatBV then floatBV:Destroy() end
 	end
 end)
 
--- SKY Logic (teleport up 150 studs + beam from head to 5 studs above ground)
+-- Sky Teleport + Beam
 skyBtn.MouseButton1Click:Connect(function()
 	local char = player.Character
 	local hrp = char and char:FindFirstChild("HumanoidRootPart")
 	if not char or not hrp then return end
 
-	-- Teleport 150 studs up
-	local startPos = hrp.Position
-	hrp.CFrame = CFrame.new(startPos.X, startPos.Y + 150, startPos.Z)
+	hrp.CFrame = hrp.CFrame + Vector3.new(0, 150, 0)
 
-	-- Cleanup existing beam
-	if beam then beam:Destroy() beam = nil end
-	if att0 then att0:Destroy() att0 = nil end
-	if att1 then att1:Destroy() att1 = nil end
-	if beamUpdateConn then beamUpdateConn:Disconnect() beamUpdateConn = nil end
+	if beam then beam:Destroy() end
+	if att0 then att0:Destroy() end
+	if att1 then att1:Destroy() end
+	if beamUpdateConn then beamUpdateConn:Disconnect() end
 
-	-- Create attachments on head and on dynamic position near ground (5 studs above)
 	local head = char:FindFirstChild("Head")
 	if not head then return end
 
 	att0 = Instance.new("Attachment", head)
-	att0.Position = Vector3.new(0, 0, 0)
-
-	att1 = Instance.new("Attachment", workspace.Terrain) -- Using Terrain as static parent
+	att1 = Instance.new("Attachment", workspace.Terrain)
 
 	beam = Instance.new("Beam")
 	beam.Attachment0 = att0
 	beam.Attachment1 = att1
 	beam.Width0 = 0.3
 	beam.Width1 = 0.3
-	beam.Color = ColorSequence.new(Color3.fromRGB(255, 255, 0))
+	beam.Color = ColorSequence.new(Color3.fromRGB(255, 0, 0))
 	beam.FaceCamera = true
 	beam.LightEmission = 1
 	beam.Transparency = NumberSequence.new(0.1)
 	beam.Parent = head
 
-	-- Update beam bottom attachment position every frame to 5 studs above ground below player
 	beamUpdateConn = RunService.Heartbeat:Connect(function()
-		if not char or not hrp or not head or not att1 or not beamUpdateConn then return end
-
-		local origin = hrp.Position
-		local raycastParams = RaycastParams.new()
-		raycastParams.FilterDescendantsInstances = {char}
-		raycastParams.FilterType = Enum.RaycastFilterType.Blacklist
-
-		local rayResult = workspace:Raycast(origin, Vector3.new(0, -500, 0), raycastParams)
-		if rayResult then
-			-- Position 5 studs above the hit point
-			att1.WorldPosition = rayResult.Position + Vector3.new(0, 5, 0)
+		local ray = workspace:Raycast(hrp.Position, Vector3.new(0, -500, 0))
+		if ray then
+			att1.WorldPosition = ray.Position + Vector3.new(0, 5, 0)
 		else
-			-- If no ground detected, put far below
-			att1.WorldPosition = origin - Vector3.new(0, 150, 0)
+			att1.WorldPosition = hrp.Position - Vector3.new(0, 150, 0)
 		end
 	end)
 end)
 
--- GROUND Logic (teleport down + remove beam)
+-- Ground Teleport
 groundBtn.MouseButton1Click:Connect(function()
-	local char = player.Character
-	local hrp = char and char:FindFirstChild("HumanoidRootPart")
-	if not char or not hrp then return end
+	local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+	if not hrp then return end
 
-	-- Teleport down (Y=3 simulates going through invisible barrier)
 	hrp.CFrame = CFrame.new(hrp.Position.X, 3, hrp.Position.Z)
 
-	if beam then beam:Destroy() beam = nil end
-	if att0 then att0:Destroy() att0 = nil end
-	if att1 then att1:Destroy() att1 = nil end
-	if beamUpdateConn then beamUpdateConn:Disconnect() beamUpdateConn = nil end
+	if beam then beam:Destroy() end
+	if att0 then att0:Destroy() end
+	if att1 then att1:Destroy() end
+	if beamUpdateConn then beamUpdateConn:Disconnect() end
 end)
 
--- ESP Setup
-local espEnabled = false
+-- ESP Logic
 local highlightFolder = Instance.new("Folder", gui)
 highlightFolder.Name = "ESPFolder"
 
@@ -331,10 +277,10 @@ local function createESP(char)
 		tag.AlwaysOnTop = true
 
 		local label = Instance.new("TextLabel", tag)
-		label.Size = UDim2.new(1,0,1,0)
+		label.Size = UDim2.new(1, 0, 1, 0)
 		label.BackgroundTransparency = 1
 		label.Text = char.Name
-		label.TextColor3 = Color3.new(1,1,1)
+		label.TextColor3 = Color3.new(1, 1, 1)
 		label.TextSize = 14
 		label.Font = Enum.Font.GothamBlack
 		label.TextStrokeTransparency = 0
@@ -352,7 +298,7 @@ end
 
 espBtn.MouseButton1Click:Connect(function()
 	espEnabled = not espEnabled
-	espBtn.BackgroundColor3 = espEnabled and Color3.fromRGB(0, 170, 0) or Color3.fromRGB(70, 70, 70)
+	espBtn.BackgroundColor3 = espEnabled and Color3.fromRGB(0,170,0) or Color3.fromRGB(70,70,70)
 	if espEnabled then
 		refreshESP()
 	else
@@ -360,10 +306,22 @@ espBtn.MouseButton1Click:Connect(function()
 	end
 end)
 
--- Refresh ESP every 10 seconds when enabled
 task.spawn(function()
 	while true do
 		task.wait(10)
 		if espEnabled then refreshESP() end
 	end
+end)
+
+-- GUI toggles
+toggleBtn.MouseButton1Click:Connect(function()
+	main.Visible = not main.Visible
+end)
+
+stealBtn.MouseButton1Click:Connect(function()
+	steal.Visible = not steal.Visible
+end)
+
+closeBtn.MouseButton1Click:Connect(function()
+	main.Visible = false
 end)
