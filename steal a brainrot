@@ -1,10 +1,10 @@
 --// Services
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
 local UIS = game:GetService("UserInputService")
 
 local player = Players.LocalPlayer
-local character = player.Character or player.CharacterAdded:Wait()
 
 local gui = Instance.new("ScreenGui", player:WaitForChild("PlayerGui"))
 gui.Name = "MainUtilityGUI"
@@ -17,6 +17,19 @@ local beam, att0, att1
 local beamUpdateConn
 local espEnabled = false
 local godModeEnabled = false
+local tweenSpeed = 30 -- studs per second
+
+-- Character & RootPart references (updated on spawn)
+local character = player.Character or player.CharacterAdded:Wait()
+local rootPart = character:WaitForChild("HumanoidRootPart")
+local spawnPosition = rootPart.Position
+
+-- Update character refs and spawnPosition on respawn
+player.CharacterAdded:Connect(function(char)
+	character = char
+	rootPart = character:WaitForChild("HumanoidRootPart")
+	spawnPosition = rootPart.Position
+end)
 
 -- Toggle Button
 local toggleBtn = Instance.new("TextButton", gui)
@@ -143,11 +156,11 @@ end
 
 local floatBtn = createStealBtn("Float", 40)
 local skyBtn = createStealBtn("Sky", 90)
-local groundBtn = createStealBtn("Ground", 140)
+-- ground button removed
 
 -- God Mode
 local function enableGodMode()
-	local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+	local hum = character and character:FindFirstChildOfClass("Humanoid")
 	if hum then
 		hum.Health = hum.MaxHealth
 		hum:GetPropertyChangedSignal("Health"):Connect(function()
@@ -166,9 +179,7 @@ end)
 
 -- Float
 floatBtn.MouseButton1Click:Connect(function()
-	local char = player.Character
-	local hrp = char and char:FindFirstChild("HumanoidRootPart")
-	if not char or not hrp then return end
+	if not character or not rootPart then return end
 
 	floatActive = not floatActive
 	floatBtn.BackgroundColor3 = floatActive and Color3.fromRGB(0, 170, 0) or Color3.fromRGB(70, 70, 70)
@@ -177,15 +188,15 @@ floatBtn.MouseButton1Click:Connect(function()
 		floatBV = Instance.new("BodyVelocity")
 		floatBV.Velocity = Vector3.new(0, 15, 0)
 		floatBV.MaxForce = Vector3.new(0, math.huge, 0)
-		floatBV.Parent = hrp
+		floatBV.Parent = rootPart
 
 		task.spawn(function()
-			while floatActive and hrp do
+			while floatActive and rootPart and rootPart.Parent do
 				RunService.Heartbeat:Wait()
-				local rayOrigin = hrp.Position + Vector3.new(0, 2, 0)
+				local rayOrigin = rootPart.Position + Vector3.new(0, 2, 0)
 				local rayDirection = Vector3.new(0, 3, 0)
 				local rayParams = RaycastParams.new()
-				rayParams.FilterDescendantsInstances = {char}
+				rayParams.FilterDescendantsInstances = {character}
 				rayParams.FilterType = Enum.RaycastFilterType.Blacklist
 
 				local result = workspace:Raycast(rayOrigin, rayDirection, rayParams)
@@ -202,57 +213,33 @@ floatBtn.MouseButton1Click:Connect(function()
 	end
 end)
 
--- Sky Teleport + Beam
+-- Sky Teleport (updated to wait 1 second after teleport up)
 skyBtn.MouseButton1Click:Connect(function()
-	local char = player.Character
-	local hrp = char and char:FindFirstChild("HumanoidRootPart")
-	if not char or not hrp then return end
+	if not character or not rootPart then return end
 
-	hrp.CFrame = hrp.CFrame + Vector3.new(0, 150, 0)
+	-- Step 1: teleport 150 studs up instantly
+	rootPart.CFrame = rootPart.CFrame + Vector3.new(0, 150, 0)
 
-	if beam then beam:Destroy() end
-	if att0 then att0:Destroy() end
-	if att1 then att1:Destroy() end
-	if beamUpdateConn then beamUpdateConn:Disconnect() end
+	-- Step 2: wait 1 second before tweening
+	task.wait(1)
 
-	local head = char:FindFirstChild("Head")
-	if not head then return end
+	local currentPos = rootPart.Position
 
-	att0 = Instance.new("Attachment", head)
-	att1 = Instance.new("Attachment", workspace.Terrain)
+	-- Step 3: tween horizontally to saved X,Z keeping current Y
+	local tweenTarget = Vector3.new(spawnPosition.X, currentPos.Y, spawnPosition.Z)
 
-	beam = Instance.new("Beam")
-	beam.Attachment0 = att0
-	beam.Attachment1 = att1
-	beam.Width0 = 0.3
-	beam.Width1 = 0.3
-	beam.Color = ColorSequence.new(Color3.fromRGB(255, 0, 0))
-	beam.FaceCamera = true
-	beam.LightEmission = 1
-	beam.Transparency = NumberSequence.new(0.1)
-	beam.Parent = head
+	local distance = (rootPart.Position - tweenTarget).Magnitude
+	local speed = tweenSpeed
+	local duration = distance / speed
 
-	beamUpdateConn = RunService.Heartbeat:Connect(function()
-		local ray = workspace:Raycast(hrp.Position, Vector3.new(0, -500, 0))
-		if ray then
-			att1.WorldPosition = ray.Position + Vector3.new(0, 5, 0)
-		else
-			att1.WorldPosition = hrp.Position - Vector3.new(0, 150, 0)
-		end
-	end)
-end)
+	local tweenInfo = TweenInfo.new(duration, Enum.EasingStyle.Linear, Enum.EasingDirection.InOut)
+	local tweenGoal = {CFrame = CFrame.new(tweenTarget)}
+	local tween = TweenService:Create(rootPart, tweenInfo, tweenGoal)
+	tween:Play()
+	tween.Completed:Wait()
 
--- Ground Teleport
-groundBtn.MouseButton1Click:Connect(function()
-	local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-	if not hrp then return end
-
-	hrp.CFrame = CFrame.new(hrp.Position.X, 3, hrp.Position.Z)
-
-	if beam then beam:Destroy() end
-	if att0 then att0:Destroy() end
-	if att1 then att1:Destroy() end
-	if beamUpdateConn then beamUpdateConn:Disconnect() end
+	-- Step 4: teleport down to original spawn Y level
+	rootPart.CFrame = CFrame.new(spawnPosition)
 end)
 
 -- ESP Logic
