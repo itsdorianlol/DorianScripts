@@ -11,8 +11,6 @@ gui.Name = "MainUtilityGUI"
 gui.ResetOnSpawn = false
 
 -- Variables
-local floatActive = false
-local floatBV
 local beam, att0, att1
 local beamUpdateConn
 local espEnabled = false
@@ -154,66 +152,114 @@ local function createStealBtn(text, posY)
 	return b
 end
 
-local floatBtn = createStealBtn("Float", 40)
-local skyBtn = createStealBtn("Sky", 90)
--- ground button removed
+-- === Anti Hit Button in Steal Controls ===
+local HEIGHT_ABOVE = 15
+local SPEED = 28 -- Try 24-32 for "safe" speed
+local PAUSE_MIN = 0.07
+local PAUSE_MAX = 0.23
+local Y_OFFSET = 0.22 -- Max random Y offset per corner
 
--- God Mode
-local function enableGodMode()
-	local hum = character and character:FindFirstChildOfClass("Humanoid")
-	if hum then
-		hum.Health = hum.MaxHealth
-		hum:GetPropertyChangedSignal("Health"):Connect(function()
-			if godModeEnabled then
-				hum.Health = hum.MaxHealth
-			end
-		end)
-	end
+local antiHitBtn = createStealBtn("Anti Hit", 40)
+antiHitBtn.BackgroundColor3 = Color3.fromRGB(100,100,180)
+
+local antiHitActive = false
+local antiHitConn
+
+local function getStandingPart()
+    local origin = rootPart.Position
+    local direction = Vector3.new(0, -6, 0)
+    local raycastParams = RaycastParams.new()
+    raycastParams.FilterDescendantsInstances = {character}
+    raycastParams.FilterType = Enum.RaycastFilterType.Blacklist
+    local result = workspace:Raycast(origin, direction, raycastParams)
+    if result and result.Instance then
+        return result.Instance
+    end
+    return nil
 end
 
-godBtn.MouseButton1Click:Connect(function()
-	godModeEnabled = not godModeEnabled
-	godBtn.BackgroundColor3 = godModeEnabled and Color3.fromRGB(0,170,0) or Color3.fromRGB(70,70,70)
-	if godModeEnabled then enableGodMode() end
+local function getCorners(part)
+    local cf, size = part.CFrame, part.Size
+    local y = size.Y/2 + HEIGHT_ABOVE
+    local corners = {
+        (cf * CFrame.new(-size.X/2, y, -size.Z/2)).Position,
+        (cf * CFrame.new(-size.X/2, y,  size.Z/2)).Position,
+        (cf * CFrame.new( size.X/2, y,  size.Z/2)).Position,
+        (cf * CFrame.new( size.X/2, y, -size.Z/2)).Position,
+    }
+    return corners
+end
+
+local function tweenTo(position)
+    -- Add tiny random Y offset for more human-like pathing
+    local yOffset = (math.random() - 0.5) * 2 * Y_OFFSET
+    local newPos = Vector3.new(position.X, position.Y + yOffset, position.Z)
+    local currentPos = rootPart.Position
+    local dist = (newPos - currentPos).Magnitude
+    local tweenTime = dist / SPEED
+    local lookVector = (newPos - currentPos).Unit
+    local lookAt = newPos + lookVector
+    local goal = {}
+    goal.CFrame = CFrame.new(newPos, lookAt)
+    local tween = TweenService:Create(
+        rootPart,
+        TweenInfo.new(tweenTime, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut),
+        goal
+    )
+    tween:Play()
+    tween.Completed:Wait()
+end
+
+antiHitBtn.MouseButton1Click:Connect(function()
+    antiHitActive = not antiHitActive
+    antiHitBtn.BackgroundColor3 = antiHitActive and Color3.fromRGB(0,170,255) or Color3.fromRGB(100,100,180)
+    if antiHitConn then
+        antiHitConn:Disconnect()
+        antiHitConn = nil
+    end
+    if not antiHitActive then return end
+
+    local part = getStandingPart()
+    if not part then
+        antiHitBtn.Text = "Stand on a part!"
+        task.wait(1.2)
+        antiHitBtn.Text = "Anti Hit"
+        antiHitActive = false
+        antiHitBtn.BackgroundColor3 = Color3.fromRGB(100,100,180)
+        return
+    end
+    antiHitBtn.Text = "Anti Hit (ON)"
+    local corners = getCorners(part)
+    local idx = 1
+    antiHitConn = RunService.Heartbeat:Connect(function()
+        rootPart.Velocity = Vector3.new(0,0,0)
+        rootPart.CFrame = CFrame.new(rootPart.Position.X, corners[1].Y, rootPart.Position.Z)
+    end)
+    task.spawn(function()
+        while antiHitActive do
+            local nextCorner = corners[idx]
+            tweenTo(nextCorner)
+            task.wait(math.random() * (PAUSE_MAX - PAUSE_MIN) + PAUSE_MIN)
+            idx = idx % #corners + 1
+        end
+        antiHitBtn.Text = "Anti Hit"
+        if antiHitConn then
+            antiHitConn:Disconnect()
+            antiHitConn = nil
+        end
+    end)
 end)
 
--- Float
-floatBtn.MouseButton1Click:Connect(function()
-	if not character or not rootPart then return end
-
-	floatActive = not floatActive
-	floatBtn.BackgroundColor3 = floatActive and Color3.fromRGB(0, 170, 0) or Color3.fromRGB(70, 70, 70)
-
-	if floatActive then
-		floatBV = Instance.new("BodyVelocity")
-		floatBV.Velocity = Vector3.new(0, 15, 0)
-		floatBV.MaxForce = Vector3.new(0, math.huge, 0)
-		floatBV.Parent = rootPart
-
-		task.spawn(function()
-			while floatActive and rootPart and rootPart.Parent do
-				RunService.Heartbeat:Wait()
-				local rayOrigin = rootPart.Position + Vector3.new(0, 2, 0)
-				local rayDirection = Vector3.new(0, 3, 0)
-				local rayParams = RaycastParams.new()
-				rayParams.FilterDescendantsInstances = {character}
-				rayParams.FilterType = Enum.RaycastFilterType.Blacklist
-
-				local result = workspace:Raycast(rayOrigin, rayDirection, rayParams)
-				if result then
-					floatBV.Velocity = Vector3.new(0, 0, 0)
-				else
-					floatBV.Velocity = Vector3.new(0, 15, 0)
-				end
-			end
-			if floatBV then floatBV:Destroy() end
-		end)
-	else
-		if floatBV then floatBV:Destroy() end
-	end
+player.CharacterAdded:Connect(function()
+    if antiHitConn then antiHitConn:Disconnect() antiHitConn = nil end
+    antiHitActive = false
+    antiHitBtn.BackgroundColor3 = Color3.fromRGB(100,100,180)
+    antiHitBtn.Text = "Anti Hit"
 end)
 
--- Sky Teleport (updated to wait 1 second after teleport up)
+local skyBtn = createStealBtn("Sky", 90)
+
+-- Sky Teleport (unchanged)
 skyBtn.MouseButton1Click:Connect(function()
 	if not character or not rootPart then return end
 
@@ -240,6 +286,25 @@ skyBtn.MouseButton1Click:Connect(function()
 
 	-- Step 4: teleport down to original spawn Y level
 	rootPart.CFrame = CFrame.new(spawnPosition)
+end)
+
+-- God Mode
+local function enableGodMode()
+	local hum = character and character:FindFirstChildOfClass("Humanoid")
+	if hum then
+		hum.Health = hum.MaxHealth
+		hum:GetPropertyChangedSignal("Health"):Connect(function()
+			if godModeEnabled then
+				hum.Health = hum.MaxHealth
+			end
+		end)
+	end
+end
+
+godBtn.MouseButton1Click:Connect(function()
+	godModeEnabled = not godModeEnabled
+	godBtn.BackgroundColor3 = godModeEnabled and Color3.fromRGB(0,170,0) or Color3.fromRGB(70,70,70)
+	if godModeEnabled then enableGodMode() end
 end)
 
 -- ESP Logic
