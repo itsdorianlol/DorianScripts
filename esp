@@ -7,7 +7,6 @@ local gui = Instance.new("ScreenGui", player:WaitForChild("PlayerGui"))
 gui.Name = "AutoESP"
 gui.ResetOnSpawn = false
 
--- ESP folder
 local highlightFolder = Instance.new("Folder", gui)
 highlightFolder.Name = "ESPFolder"
 
@@ -40,7 +39,7 @@ local function createESP(char)
 	end
 end
 
--- Refresh ESP for all players
+-- Refresh ESP
 local function refreshESP()
 	highlightFolder:ClearAllChildren()
 	for _, plr in ipairs(Players:GetPlayers()) do
@@ -50,7 +49,15 @@ local function refreshESP()
 	end
 end
 
--- Refresh on new players spawning
+-- Auto-refresh every 1 second
+task.spawn(function()
+	while true do
+		refreshESP()
+		task.wait(1)
+	end
+end)
+
+-- Add ESP when players spawn
 Players.PlayerAdded:Connect(function(plr)
 	plr.CharacterAdded:Connect(function()
 		task.wait(1)
@@ -58,11 +65,4 @@ Players.PlayerAdded:Connect(function(plr)
 	end)
 end)
 
--- Initial + recurring refresh
 refreshESP()
-task.spawn(function()
-	while true do
-		task.wait(10)
-		refreshESP()
-	end
-end)
