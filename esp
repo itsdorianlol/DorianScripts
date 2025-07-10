@@ -1,1 +1,68 @@
-idk
+--// Services
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+
+local player = Players.LocalPlayer
+local gui = Instance.new("ScreenGui", player:WaitForChild("PlayerGui"))
+gui.Name = "AutoESP"
+gui.ResetOnSpawn = false
+
+-- ESP folder
+local highlightFolder = Instance.new("Folder", gui)
+highlightFolder.Name = "ESPFolder"
+
+-- Create ESP for a character
+local function createESP(char)
+	if highlightFolder:FindFirstChild(char.Name) then return end
+	local h = Instance.new("Highlight")
+	h.Name = char.Name
+	h.FillColor = Color3.new(1, 0, 0)
+	h.OutlineColor = Color3.new(0, 0, 0)
+	h.Adornee = char
+	h.Parent = highlightFolder
+
+	local head = char:FindFirstChild("Head")
+	if head then
+		local tag = Instance.new("BillboardGui", h)
+		tag.Adornee = head
+		tag.Size = UDim2.new(0, 100, 0, 25)
+		tag.StudsOffset = Vector3.new(0, 2, 0)
+		tag.AlwaysOnTop = true
+
+		local label = Instance.new("TextLabel", tag)
+		label.Size = UDim2.new(1, 0, 1, 0)
+		label.BackgroundTransparency = 1
+		label.Text = char.Name
+		label.TextColor3 = Color3.new(1, 1, 1)
+		label.TextSize = 14
+		label.Font = Enum.Font.GothamBlack
+		label.TextStrokeTransparency = 0
+	end
+end
+
+-- Refresh ESP for all players
+local function refreshESP()
+	highlightFolder:ClearAllChildren()
+	for _, plr in ipairs(Players:GetPlayers()) do
+		if plr ~= player and plr.Character and plr.Character:FindFirstChild("HumanoidRootPart") then
+			createESP(plr.Character)
+		end
+	end
+end
+
+-- Refresh on new players spawning
+Players.PlayerAdded:Connect(function(plr)
+	plr.CharacterAdded:Connect(function()
+		task.wait(1)
+		refreshESP()
+	end)
+end)
+
+-- Initial + recurring refresh
+refreshESP()
+task.spawn(function()
+	while true do
+		task.wait(10)
+		refreshESP()
+	end
+end)
