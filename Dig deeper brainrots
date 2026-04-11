@@ -15,16 +15,16 @@ local function style(obj, radius)
 	stroke.Thickness = 1.5
 end
 
--- --- MAIN GUI ---
+-- --- GUI ---
 local sg = Instance.new("ScreenGui", player.PlayerGui)
-sg.Name = "DorianDelta_SpeedFix"
+sg.Name = "DorianScript_ClassicFly"
 sg.ResetOnSpawn = false
 
 local function addCloseButton(parent)
 	local close = Instance.new("TextButton", parent)
 	close.Size = UDim2.new(0, 30, 0, 30)
 	close.Position = UDim2.new(1, -35, 0, 5)
-	close.BackgroundColor3 = Color3.fromRGB(180, 0, 0)
+	close.BackgroundColor3 = Color3.fromRGB(150, 0, 0)
 	close.Text = "X"
 	close.TextColor3 = Color3.new(1, 1, 1)
 	close.Font = Enum.Font.GothamBold
@@ -32,7 +32,7 @@ local function addCloseButton(parent)
 	close.MouseButton1Click:Connect(function() parent.Visible = false end)
 end
 
--- Toggle Circle
+-- Circle Toggle
 local toggleBtn = Instance.new("TextButton", sg)
 toggleBtn.Size = UDim2.new(0, 60, 0, 60)
 toggleBtn.Position = UDim2.new(0, 10, 0.4, 0)
@@ -81,13 +81,13 @@ local tpMenuBtn = createBtn("Teleports >>", UDim2.new(0.05, 0, 0.5, 0), main)
 local speedInput = Instance.new("TextBox", main)
 speedInput.Size = UDim2.new(0.9, 0, 0, 35)
 speedInput.Position = UDim2.new(0.05, 0, 0.7, 0)
-speedInput.PlaceholderText = "Fly Speed (Default 50)"
+speedInput.PlaceholderText = "Fly Speed (50)"
 speedInput.Text = "50"
 speedInput.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
 speedInput.TextColor3 = Color3.new(1, 1, 1)
 style(speedInput, 6)
 
--- Teleport Sub-Menu
+-- TP Menu
 local tpFrame = Instance.new("Frame", sg)
 tpFrame.Size = UDim2.new(0, 220, 0, 280)
 tpFrame.Position = UDim2.new(0.5, 130, 0.5, -140)
@@ -110,9 +110,9 @@ layout.Padding = UDim.new(0, 8)
 -- --- LOGIC ---
 local flying, noclip = false, false
 local flySpeed = 50
+local bv, bg
 local savedLocations = {}
 
--- Saving Logic
 local function saveToDelta()
 	local data = {}
 	for i, cf in pairs(savedLocations) do data[i] = {cf.X, cf.Y, cf.Z} end
@@ -150,11 +150,35 @@ savePosBtn.MouseButton1Click:Connect(function()
 	end
 end)
 
--- --- MOVEMENT UPDATES ---
+-- --- CLASSIC BODYVELOCITY FLY ---
+local function startFly()
+	local char = player.Character
+	if not char or not char:FindFirstChild("HumanoidRootPart") then return end
+	char.Humanoid.PlatformStand = true
+	
+	bg = Instance.new("BodyGyro", char.HumanoidRootPart)
+	bg.P = 9e4
+	bg.MaxTorque = Vector3.new(9e9, 9e9, 9e9)
+	bg.CFrame = char.HumanoidRootPart.CFrame
+	
+	bv = Instance.new("BodyVelocity", char.HumanoidRootPart)
+	bv.Velocity = Vector3.new(0, 0.1, 0)
+	bv.MaxForce = Vector3.new(9e9, 9e9, 9e9)
+end
+
+local function stopFly()
+	if bv then bv:Destroy() end
+	if bg then bg:Destroy() end
+	if player.Character and player.Character:FindFirstChild("Humanoid") then
+		player.Character.Humanoid.PlatformStand = false
+	end
+end
+
 flyBtn.MouseButton1Click:Connect(function()
 	flying = not flying
 	flyBtn.Text = flying and "Fly: ON" or "Fly: OFF"
 	flyBtn.BackgroundColor3 = flying and Color3.fromRGB(0, 150, 0) or Color3.fromRGB(25, 25, 25)
+	if flying then startFly() else stopFly() end
 end)
 
 noclipBtn.MouseButton1Click:Connect(function()
@@ -164,29 +188,27 @@ noclipBtn.MouseButton1Click:Connect(function()
 end)
 
 speedInput:GetPropertyChangedSignal("Text"):Connect(function()
-	flySpeed = tonumber(speedInput.Text) or 0
+	flySpeed = tonumber(speedInput.Text) or 50
 end)
 
 RunService.RenderStepped:Connect(function()
-	local char = player.Character
-	if not char or not char:FindFirstChild("HumanoidRootPart") then return end
-	local hrp = char.HumanoidRootPart
-	local hum = char.Humanoid
-
-	if noclip then
-		for _, v in pairs(char:GetDescendants()) do
+	if noclip and player.Character then
+		for _, v in pairs(player.Character:GetDescendants()) do
 			if v:IsA("BasePart") then v.CanCollide = false end
 		end
 	end
-
-	if flying then
-		-- Keeps character upright and floating
-		hrp.Velocity = Vector3.new(0, 0.1, 0) 
+	
+	if flying and bv and bg and player.Character then
+		local cam = workspace.CurrentCamera
+		local hum = player.Character.Humanoid
 		
-		local moveDir = hum.MoveDirection
-		if moveDir.Magnitude > 0 then
-			-- Moving based on your Joystick
-			hrp.CFrame = hrp.CFrame + (moveDir * (flySpeed / 10))
+		-- Use Joystick MoveDirection
+		bv.Velocity = hum.MoveDirection * flySpeed
+		bg.CFrame = cam.CFrame
+		
+		-- Keep you from falling if you aren't moving the joystick
+		if hum.MoveDirection.Magnitude == 0 then
+			bv.Velocity = Vector3.new(0, 0.1, 0)
 		end
 	end
 end)
