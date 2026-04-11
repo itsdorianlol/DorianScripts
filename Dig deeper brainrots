@@ -3,7 +3,6 @@ local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 
 local player = Players.LocalPlayer
-local mouse = player:GetMouse()
 
 -- --- STYLING UTILITY ---
 local function style(obj, radius)
@@ -16,10 +15,26 @@ end
 
 -- --- MAIN GUI ELEMENTS ---
 local sg = Instance.new("ScreenGui", player.PlayerGui)
-sg.Name = "DorianScript_V2"
+sg.Name = "DorianScript_V3"
 sg.ResetOnSpawn = false
 
--- The Circle Toggle Button
+-- Function to add a Close Button to any frame
+local function addCloseButton(parent)
+	local close = Instance.new("TextButton", parent)
+	close.Size = UDim2.new(0, 25, 0, 25)
+	close.Position = UDim2.new(1, -30, 0, 5)
+	close.BackgroundColor3 = Color3.fromRGB(150, 0, 0)
+	close.Text = "X"
+	close.TextColor3 = Color3.new(1, 1, 1)
+	close.Font = Enum.Font.GothamBold
+	style(close, 5)
+	
+	close.MouseButton1Click:Connect(function()
+		parent.Visible = false
+	end)
+end
+
+-- The Circle Toggle Button (Always stays on screen)
 local toggleBtn = Instance.new("TextButton", sg)
 toggleBtn.Size = UDim2.new(0, 50, 0, 50)
 toggleBtn.Position = UDim2.new(0, 20, 0.5, -25)
@@ -37,16 +52,18 @@ main.Position = UDim2.new(0.5, -110, 0.5, -160)
 main.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
 main.Visible = false
 main.Active = true
-main.Draggable = true
+main.Draggable = true -- Makes the GUI movable
 style(main, 10)
+addCloseButton(main) -- Adds the red X
 
 local title = Instance.new("TextLabel", main)
-title.Size = UDim2.new(1, 0, 0, 45)
+title.Size = UDim2.new(1, -40, 0, 45)
+title.Position = UDim2.new(0, 10, 0, 0)
 title.Text = "DORIAN SCRIPT"
 title.TextColor3 = Color3.new(1, 1, 1)
 title.BackgroundTransparency = 1
 title.Font = Enum.Font.GothamBold
-title.TextSize = 18
+title.TextXAlignment = Enum.TextXAlignment.Left
 
 -- --- BUTTON CREATOR ---
 local function createBtn(text, pos, parent)
@@ -65,7 +82,6 @@ local flyBtn = createBtn("Fly: OFF", UDim2.new(0.05, 0, 0.2, 0), main)
 local noclipBtn = createBtn("Noclip: OFF", UDim2.new(0.05, 0, 0.35, 0), main)
 local tpMenuBtn = createBtn("Teleports >>", UDim2.new(0.05, 0, 0.5, 0), main)
 
--- Speed Input Box
 local speedInput = Instance.new("TextBox", main)
 speedInput.Size = UDim2.new(0.9, 0, 0, 30)
 speedInput.Position = UDim2.new(0.05, 0, 0.65, 0)
@@ -81,14 +97,17 @@ tpFrame.Size = UDim2.new(0, 200, 0, 250)
 tpFrame.Position = UDim2.new(0.5, 120, 0.5, -125)
 tpFrame.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
 tpFrame.Visible = false
+tpFrame.Active = true
+tpFrame.Draggable = true -- Makes Teleport Menu movable
 style(tpFrame, 10)
+addCloseButton(tpFrame) -- Adds the red X
 
-local savePosBtn = createBtn("SAVE CURRENT POS", UDim2.new(0.05, 0, 0.05, 0), tpFrame)
+local savePosBtn = createBtn("SAVE CURRENT POS", UDim2.new(0.05, 0, 0.15, 0), tpFrame)
 savePosBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
 
 local tpList = Instance.new("ScrollingFrame", tpFrame)
-tpList.Size = UDim2.new(0.9, 0, 0.7, 0)
-tpList.Position = UDim2.new(0.05, 0, 0.25, 0)
+tpList.Size = UDim2.new(0.9, 0, 0.6, 0)
+tpList.Position = UDim2.new(0.05, 0, 0.35, 0)
 tpList.BackgroundTransparency = 1
 tpList.CanvasSize = UDim2.new(0, 0, 5, 0)
 tpList.ScrollBarThickness = 2
@@ -104,10 +123,8 @@ local flySpeed = 50
 local bv, bg
 local savedLocations = {}
 
--- Toggle GUI
 toggleBtn.MouseButton1Click:Connect(function()
 	main.Visible = not main.Visible
-	if not main.Visible then tpFrame.Visible = false end
 end)
 
 tpMenuBtn.MouseButton1Click:Connect(function()
@@ -143,19 +160,16 @@ flyBtn.MouseButton1Click:Connect(function()
 	if flying then startFly() else stopFly() end
 end)
 
--- Noclip Toggle
 noclipBtn.MouseButton1Click:Connect(function()
 	noclip = not noclip
 	noclipBtn.Text = noclip and "Noclip: ON" or "Noclip: OFF"
 	noclipBtn.BackgroundColor3 = noclip and Color3.fromRGB(0, 120, 0) or Color3.fromRGB(25, 25, 25)
 end)
 
--- Speed Update
 speedInput.FocusLost:Connect(function()
 	flySpeed = tonumber(speedInput.Text) or 50
 end)
 
--- Teleport Save Logic
 savePosBtn.MouseButton1Click:Connect(function()
 	local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
 	if root then
@@ -173,7 +187,6 @@ savePosBtn.MouseButton1Click:Connect(function()
 	end
 end)
 
--- Constant Loop for Fly and Noclip
 RunService.Stepped:Connect(function()
 	if noclip and player.Character then
 		for _, part in pairs(player.Character:GetDescendants()) do
