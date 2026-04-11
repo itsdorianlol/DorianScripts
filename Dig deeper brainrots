@@ -1,0 +1,195 @@
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+
+local player = Players.LocalPlayer
+local mouse = player:GetMouse()
+
+-- --- STYLING UTILITY ---
+local function style(obj, radius)
+	local corner = Instance.new("UICorner", obj)
+	corner.CornerRadius = UDim.new(0, radius or 8)
+	local stroke = Instance.new("UIStroke", obj)
+	stroke.Color = Color3.fromRGB(70, 70, 70)
+	stroke.Thickness = 1.5
+end
+
+-- --- MAIN GUI ELEMENTS ---
+local sg = Instance.new("ScreenGui", player.PlayerGui)
+sg.Name = "DorianScript_V2"
+sg.ResetOnSpawn = false
+
+-- The Circle Toggle Button
+local toggleBtn = Instance.new("TextButton", sg)
+toggleBtn.Size = UDim2.new(0, 50, 0, 50)
+toggleBtn.Position = UDim2.new(0, 20, 0.5, -25)
+toggleBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+toggleBtn.Text = "D"
+toggleBtn.TextColor3 = Color3.new(1, 1, 1)
+toggleBtn.Font = Enum.Font.GothamBold
+toggleBtn.TextSize = 20
+style(toggleBtn, 25) 
+
+-- Main Menu Frame
+local main = Instance.new("Frame", sg)
+main.Size = UDim2.new(0, 220, 0, 320)
+main.Position = UDim2.new(0.5, -110, 0.5, -160)
+main.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
+main.Visible = false
+main.Active = true
+main.Draggable = true
+style(main, 10)
+
+local title = Instance.new("TextLabel", main)
+title.Size = UDim2.new(1, 0, 0, 45)
+title.Text = "DORIAN SCRIPT"
+title.TextColor3 = Color3.new(1, 1, 1)
+title.BackgroundTransparency = 1
+title.Font = Enum.Font.GothamBold
+title.TextSize = 18
+
+-- --- BUTTON CREATOR ---
+local function createBtn(text, pos, parent)
+	local b = Instance.new("TextButton", parent)
+	b.Size = UDim2.new(0.9, 0, 0, 35)
+	b.Position = pos
+	b.Text = text
+	b.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+	b.TextColor3 = Color3.new(1, 1, 1)
+	b.Font = Enum.Font.Gotham
+	style(b, 6)
+	return b
+end
+
+local flyBtn = createBtn("Fly: OFF", UDim2.new(0.05, 0, 0.2, 0), main)
+local noclipBtn = createBtn("Noclip: OFF", UDim2.new(0.05, 0, 0.35, 0), main)
+local tpMenuBtn = createBtn("Teleports >>", UDim2.new(0.05, 0, 0.5, 0), main)
+
+-- Speed Input Box
+local speedInput = Instance.new("TextBox", main)
+speedInput.Size = UDim2.new(0.9, 0, 0, 30)
+speedInput.Position = UDim2.new(0.05, 0, 0.65, 0)
+speedInput.PlaceholderText = "Set Speed (50)"
+speedInput.Text = "50"
+speedInput.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+speedInput.TextColor3 = Color3.new(1, 1, 1)
+style(speedInput, 4)
+
+-- --- TELEPORT SUB-MENU ---
+local tpFrame = Instance.new("Frame", sg)
+tpFrame.Size = UDim2.new(0, 200, 0, 250)
+tpFrame.Position = UDim2.new(0.5, 120, 0.5, -125)
+tpFrame.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
+tpFrame.Visible = false
+style(tpFrame, 10)
+
+local savePosBtn = createBtn("SAVE CURRENT POS", UDim2.new(0.05, 0, 0.05, 0), tpFrame)
+savePosBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+
+local tpList = Instance.new("ScrollingFrame", tpFrame)
+tpList.Size = UDim2.new(0.9, 0, 0.7, 0)
+tpList.Position = UDim2.new(0.05, 0, 0.25, 0)
+tpList.BackgroundTransparency = 1
+tpList.CanvasSize = UDim2.new(0, 0, 5, 0)
+tpList.ScrollBarThickness = 2
+
+local layout = Instance.new("UIListLayout", tpList)
+layout.Padding = UDim.new(0, 5)
+
+-- --- SCRIPT LOGIC ---
+
+local flying = false
+local noclip = false
+local flySpeed = 50
+local bv, bg
+local savedLocations = {}
+
+-- Toggle GUI
+toggleBtn.MouseButton1Click:Connect(function()
+	main.Visible = not main.Visible
+	if not main.Visible then tpFrame.Visible = false end
+end)
+
+tpMenuBtn.MouseButton1Click:Connect(function()
+	tpFrame.Visible = not tpFrame.Visible
+end)
+
+-- Fly Functionality
+local function startFly()
+	local char = player.Character
+	if not char or not char:FindFirstChild("HumanoidRootPart") then return end
+	char.Humanoid.PlatformStand = true
+	bg = Instance.new("BodyGyro", char.HumanoidRootPart)
+	bg.P = 9e4
+	bg.MaxTorque = Vector3.new(9e9, 9e9, 9e9)
+	bg.CFrame = char.HumanoidRootPart.CFrame
+	bv = Instance.new("BodyVelocity", char.HumanoidRootPart)
+	bv.Velocity = Vector3.new(0, 0.1, 0)
+	bv.MaxForce = Vector3.new(9e9, 9e9, 9e9)
+end
+
+local function stopFly()
+	if bv then bv:Destroy() end
+	if bg then bg:Destroy() end
+	if player.Character and player.Character:FindFirstChild("Humanoid") then
+		player.Character.Humanoid.PlatformStand = false
+	end
+end
+
+flyBtn.MouseButton1Click:Connect(function()
+	flying = not flying
+	flyBtn.Text = flying and "Fly: ON" or "Fly: OFF"
+	flyBtn.BackgroundColor3 = flying and Color3.fromRGB(0, 120, 0) or Color3.fromRGB(25, 25, 25)
+	if flying then startFly() else stopFly() end
+end)
+
+-- Noclip Toggle
+noclipBtn.MouseButton1Click:Connect(function()
+	noclip = not noclip
+	noclipBtn.Text = noclip and "Noclip: ON" or "Noclip: OFF"
+	noclipBtn.BackgroundColor3 = noclip and Color3.fromRGB(0, 120, 0) or Color3.fromRGB(25, 25, 25)
+end)
+
+-- Speed Update
+speedInput.FocusLost:Connect(function()
+	flySpeed = tonumber(speedInput.Text) or 50
+end)
+
+-- Teleport Save Logic
+savePosBtn.MouseButton1Click:Connect(function()
+	local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+	if root then
+		local currentCF = root.CFrame
+		local name = "Point " .. (#savedLocations + 1)
+		table.insert(savedLocations, currentCF)
+		
+		local newTp = createBtn(name, UDim2.new(0,0,0,0), tpList)
+		newTp.Size = UDim2.new(1, 0, 0, 30)
+		newTp.MouseButton1Click:Connect(function()
+			if player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+				player.Character.HumanoidRootPart.CFrame = currentCF
+			end
+		end)
+	end
+end)
+
+-- Constant Loop for Fly and Noclip
+RunService.Stepped:Connect(function()
+	if noclip and player.Character then
+		for _, part in pairs(player.Character:GetDescendants()) do
+			if part:IsA("BasePart") then part.CanCollide = false end
+		end
+	end
+	
+	if flying and bv and bg and player.Character then
+		local cam = workspace.CurrentCamera
+		local direction = Vector3.new(0,0,0)
+		if UserInputService:IsKeyDown(Enum.KeyCode.W) then direction += cam.CFrame.LookVector end
+		if UserInputService:IsKeyDown(Enum.KeyCode.S) then direction -= cam.CFrame.LookVector end
+		if UserInputService:IsKeyDown(Enum.KeyCode.A) then direction -= cam.CFrame.RightVector end
+		if UserInputService:IsKeyDown(Enum.KeyCode.D) then direction += cam.CFrame.RightVector end
+		
+		bv.Velocity = direction * flySpeed
+		bg.CFrame = cam.CFrame
+	end
+end)
