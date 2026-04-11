@@ -17,7 +17,7 @@ end
 
 -- --- GUI ---
 local sg = Instance.new("ScreenGui", player.PlayerGui)
-sg.Name = "DorianScript_ClassicFly"
+sg.Name = "DorianScript_ClassicCameraFly"
 sg.ResetOnSpawn = false
 
 local function addCloseButton(parent)
@@ -87,7 +87,7 @@ speedInput.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
 speedInput.TextColor3 = Color3.new(1, 1, 1)
 style(speedInput, 6)
 
--- TP Menu
+-- Teleport Menu
 local tpFrame = Instance.new("Frame", sg)
 tpFrame.Size = UDim2.new(0, 220, 0, 280)
 tpFrame.Position = UDim2.new(0.5, 130, 0.5, -140)
@@ -130,11 +130,14 @@ local function addTpBtn(name, cframe)
 end
 
 if isfile(FILE_NAME) then
-	local decoded = HttpService:JSONDecode(readfile(FILE_NAME))
-	for i, p in pairs(decoded) do
-		local cf = CFrame.new(p[1], p[2], p[3])
-		table.insert(savedLocations, cf)
-		addTpBtn("Saved Spot " .. i, cf)
+	local success, content = pcall(function() return readfile(FILE_NAME) end)
+	if success then
+		local decoded = HttpService:JSONDecode(content)
+		for i, p in pairs(decoded) do
+			local cf = CFrame.new(p[1], p[2], p[3])
+			table.insert(savedLocations, cf)
+			addTpBtn("Saved Spot " .. i, cf)
+		end
 	end
 end
 
@@ -150,7 +153,7 @@ savePosBtn.MouseButton1Click:Connect(function()
 	end
 end)
 
--- --- CLASSIC BODYVELOCITY FLY ---
+-- --- CAMERA-BASED FLY LOGIC ---
 local function startFly()
 	local char = player.Character
 	if not char or not char:FindFirstChild("HumanoidRootPart") then return end
@@ -202,13 +205,15 @@ RunService.RenderStepped:Connect(function()
 		local cam = workspace.CurrentCamera
 		local hum = player.Character.Humanoid
 		
-		-- Use Joystick MoveDirection
-		bv.Velocity = hum.MoveDirection * flySpeed
-		bg.CFrame = cam.CFrame
-		
-		-- Keep you from falling if you aren't moving the joystick
-		if hum.MoveDirection.Magnitude == 0 then
+		-- EXACT LOGIC: MoveDirection combined with Camera Orientation
+		-- This makes 'Forward' go where the camera is pointing (up/down/left/right)
+		if hum.MoveDirection.Magnitude > 0 then
+			bv.Velocity = cam.CFrame.LookVector * (hum.MoveDirection.Z < 0 and flySpeed or (hum.MoveDirection.Z > 0 and -flySpeed or 0)) + 
+			              cam.CFrame.RightVector * (hum.MoveDirection.X > 0 and flySpeed or (hum.MoveDirection.X < 0 and -flySpeed or 0))
+		else
 			bv.Velocity = Vector3.new(0, 0.1, 0)
 		end
+		
+		bg.CFrame = cam.CFrame
 	end
 end)
