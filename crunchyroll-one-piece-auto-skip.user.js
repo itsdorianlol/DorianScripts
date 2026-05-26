@@ -1,524 +1,408 @@
 // ==UserScript==
-// @name         Crunchyroll Auto Skip — GUI
+// @name         Crunchyroll Auto Skip — Smart (AniSkip)
 // @namespace    https://github.com/itsdorianlol
-// @version      2.0
-// @description  Auto-skips intros, recaps, and outros on Crunchyroll. No skip button needed — seeks the video directly. Includes a floating GUI panel to control all settings.
+// @version      3.0
+// @description  Auto-detects exact intro/recap/outro timestamps from AniSkip + Jikan APIs. No manual config needed. Floating GUI to control everything.
 // @author       Dorian
 // @match        https://www.crunchyroll.com/*
 // @icon         https://www.crunchyroll.com/favicons/favicon-32x32.png
 // @grant        GM_setValue
 // @grant        GM_getValue
+// @grant        GM_xmlhttpRequest
+// @connect      api.jikan.moe
+// @connect      api.aniskip.com
 // @run-at       document-idle
 // ==/UserScript==
 
 (function () {
   'use strict';
 
-  // ─── Default Settings ────────────────────────────────────────────────────────
-  const DEFAULTS = {
-    enabled:       true,
-    skipIntro:     true,
-    skipRecap:     true,
-    skipOutro:     false,
-    introStart:    0,    // seconds — when the intro begins
-    introEnd:      90,   // seconds — seek to here to skip intro (≈ 1 min 30 s)
-    recapStart:    0,    // seconds — when recap plays (usually before intro)
-    recapEnd:      60,   // seconds — seek past recap
-    outroStart:    1380, // seconds — when credits start (23 min)
-    outroEnd:      1440, // seconds — seek to here (or next ep)
-    showOnAnyPage: true, // show GUI button on all CR pages, not just video pages
+  // ─── Saved prefs ─────────────────────────────────────────────────────────────
+  function load(k, d) { try { return JSON.parse(GM_getValue(k, JSON.stringify(d))); } catch(e) { return d; } }
+  function save(k, v) { GM_setValue(k, JSON.stringify(v)); }
+
+  const cfg = {
+    enabled:    load('enabled', true),
+    skipIntro:  load('skipIntro', true),
+    skipRecap:  load('skipRecap', true),
+    skipOutro:  load('skipOutro', false),
   };
-
-  // ─── Load / Save settings via GM storage ─────────────────────────────────────
-  function load(key)       { try { return JSON.parse(GM_getValue(key, JSON.stringify(DEFAULTS[key]))); } catch(e) { return DEFAULTS[key]; } }
-  function save(key, val)  { GM_setValue(key, JSON.stringify(val)); }
-
-  const cfg = {};
-  Object.keys(DEFAULTS).forEach(k => { cfg[k] = load(k); });
-
   function saveCfg() { Object.keys(cfg).forEach(k => save(k, cfg[k])); }
 
-  // ─── Video helpers ────────────────────────────────────────────────────────────
-  function getVideo() {
-    return document.querySelector('video');
-  }
 
-  function seekTo(seconds) {
+  // ─── State ────────────────────────────────────────────────────────────────────
+  let skipTimes   = null;   // { op, ed, recap } each = { startTime, endTime } | null
+  let lastMalId   = null;
+  let lastEpNum   = null;
+  let lastUrl     = '';
+  let skipped     = { op: false, ed: false, recap: false };
+  let statusMsg   = 'Waiting for episode…';
+
+  // ─── Helpers ──────────────────────────────────────────────────────────────────
+  function getVideo() { return document.querySelector('video'); }
+
+  function seekTo(s) {
     const v = getVideo();
-    if (v && isFinite(seconds)) {
-      v.currentTime = seconds;
-      console.log(`[CR Skip] Seeked to ${seconds}s`);
-    }
+    if (v && isFinite(s)) { v.currentTime = s; log(`Seeked to ${s}s`); }
   }
 
-  // ─── Skip logic (runs every 500 ms) ──────────────────────────────────────────
-  // Since CR doesn't always show skip buttons, we watch the video time and
-  // jump over the known intro / recap / outro windows.
-  // We also still click any CR skip buttons that do appear (some regions get them).
+  function log(msg) { console.log(`[CR Smart-Skip] ${msg}`); }
 
-  let skippedIntro  = false;
-  let skippedRecap  = false;
-  let skippedOutro  = false;
-  let lastVideoSrc  = '';
-
-  function resetSkipFlags() {
-    skippedIntro = false;
-    skippedRecap = false;
-    skippedOutro = false;
-  }
-
-  // Attempt to click CR's native skip buttons (some users/regions see them)
-  const NATIVE_SELECTORS = [
-    '[data-testid="skipIntroBtn"]',
-    '[data-testid="skipRecapBtn"]',
-    '[data-testid="skipCreditsBtn"]',
-    '[data-testid="vilos-skip_intro_button"]',
-    '.skip-btn', '.skipButton', 'button.player-skip-button',
-  ];
-
-  function clickNativeButtons() {
-    for (const sel of NATIVE_SELECTORS) {
-      document.querySelectorAll(sel).forEach(btn => {
-        if (btn.offsetParent !== null) {
-          const lbl = (btn.innerText || btn.textContent || '').toLowerCase();
-          if (cfg.skipIntro && (lbl.includes('intro') || lbl.includes('opening'))) { btn.click(); }
-          if (cfg.skipRecap && lbl.includes('recap'))  { btn.click(); }
-          if (cfg.skipOutro && (lbl.includes('credit') || lbl.includes('outro') || lbl.includes('ending'))) { btn.click(); }
-        }
+  function gmFetch(url) {
+    return new Promise((resolve, reject) => {
+      GM_xmlhttpRequest({
+        method: 'GET', url,
+        onload:  r => { try { resolve(JSON.parse(r.responseText)); } catch(e) { reject(e); } },
+        onerror: reject,
       });
-    }
-    // Fallback: all buttons
-    document.querySelectorAll('button').forEach(btn => {
-      if (btn.offsetParent === null) return;
-      const lbl = (btn.innerText || btn.textContent || '').toLowerCase();
-      if (cfg.skipIntro && (lbl.includes('skip intro') || lbl.includes('skip opening'))) btn.click();
-      if (cfg.skipRecap && lbl.includes('skip recap'))   btn.click();
-      if (cfg.skipOutro && (lbl.includes('skip credits') || lbl.includes('skip outro') || lbl.includes('skip ending'))) btn.click();
     });
   }
 
-  function tick() {
-    if (!cfg.enabled) return;
 
-    const v = getVideo();
-    if (!v) return;
+  // ─── Parse episode info from Crunchyroll URL + page ──────────────────────────
+  // CR URLs look like: /watch/GXXXXXX/episode-title
+  // The episode number and series title live in the page <title> and JSON-LD
+  function parsePageInfo() {
+    const info = { seriesTitle: null, episodeNum: null };
 
-    // Reset flags when a new video starts
-    if (v.src !== lastVideoSrc) {
-      lastVideoSrc = v.src;
-      resetSkipFlags();
+    // Try JSON-LD first (most reliable)
+    document.querySelectorAll('script[type="application/ld+json"]').forEach(el => {
+      try {
+        const d = JSON.parse(el.textContent);
+        const arr = Array.isArray(d) ? d : [d];
+        arr.forEach(item => {
+          if (item['@type'] === 'TVEpisode' || item['@type'] === 'Episode') {
+            if (item.partOfSeries?.name) info.seriesTitle = item.partOfSeries.name;
+            if (item.episodeNumber)      info.episodeNum  = parseInt(item.episodeNumber, 10);
+          }
+        });
+      } catch(e) {}
+    });
+
+    // Fallback: page <title> often = "Episode 42 – Series Name | Crunchyroll"
+    if (!info.seriesTitle || !info.episodeNum) {
+      const t = document.title;
+      const epMatch    = t.match(/[Ee]pisode\s+(\d+)/);
+      const titleMatch = t.match(/^(.*?)\s*[\|–-]/);
+      if (epMatch)    info.episodeNum  = parseInt(epMatch[1], 10);
+      if (titleMatch) info.seriesTitle = titleMatch[1].replace(/[Ee]pisode\s+\d+\s*[-–]\s*/,'').trim();
     }
 
+    // Fallback 2: meta og:title
+    if (!info.seriesTitle) {
+      const og = document.querySelector('meta[property="og:title"]');
+      if (og) {
+        const v = og.content;
+        const m = v.match(/^(.*?)\s*[\|–\-]/);
+        if (m) info.seriesTitle = m[1].trim();
+      }
+    }
+
+    return info;
+  }
+
+
+  // ─── Step 1: Get MAL ID via Jikan ─────────────────────────────────────────────
+  async function getMalId(seriesTitle) {
+    try {
+      const q   = encodeURIComponent(seriesTitle);
+      const data = await gmFetch(`https://api.jikan.moe/v4/anime?q=${q}&limit=5&type=tv`);
+      if (!data.data || data.data.length === 0) return null;
+      // Pick best match: exact title match first, else first result
+      const exact = data.data.find(a =>
+        a.title?.toLowerCase() === seriesTitle.toLowerCase() ||
+        a.title_english?.toLowerCase() === seriesTitle.toLowerCase()
+      );
+      return (exact || data.data[0]).mal_id;
+    } catch(e) {
+      log('Jikan error: ' + e);
+      return null;
+    }
+  }
+
+  // ─── Step 2: Get skip times via AniSkip ───────────────────────────────────────
+  async function getSkipTimes(malId, episodeNum) {
+    try {
+      const v = getVideo();
+      const epLen = v ? Math.round(v.duration) || 0 : 0;
+      const url = `https://api.aniskip.com/v2/skip-times/${malId}/${episodeNum}`
+                + `?types[]=op&types[]=ed&types[]=recap&episodeLength=${epLen}`;
+      const data = await gmFetch(url);
+      if (!data.found) return null;
+      const out = { op: null, ed: null, recap: null };
+      (data.results || []).forEach(r => {
+        if (out[r.skipType] !== undefined) {
+          out[r.skipType] = { startTime: r.interval.startTime, endTime: r.interval.endTime };
+        }
+      });
+      log(`AniSkip times for MAL ${malId} ep ${episodeNum}: ` + JSON.stringify(out));
+      return out;
+    } catch(e) {
+      log('AniSkip error: ' + e);
+      return null;
+    }
+  }
+
+
+  // ─── Orchestrate lookup ───────────────────────────────────────────────────────
+  async function lookupEpisode(force = false) {
+    if (!location.pathname.includes('/watch/')) return;
+
+    const { seriesTitle, episodeNum } = parsePageInfo();
+    if (!seriesTitle || !episodeNum) {
+      statusMsg = '⚠️ Could not read episode info yet';
+      updateStatus(); return;
+    }
+
+    if (!force && episodeNum === lastEpNum && lastMalId) return; // already loaded
+
+    statusMsg = `🔍 Looking up "${seriesTitle}" ep ${episodeNum}…`;
+    updateStatus();
+
+    let malId = lastMalId;
+    if (!malId || force) {
+      malId = await getMalId(seriesTitle);
+      if (!malId) {
+        statusMsg = '❌ Could not find anime on MAL';
+        updateStatus(); return;
+      }
+      lastMalId = malId;
+    }
+
+    const times = await getSkipTimes(malId, episodeNum);
+    skipTimes  = times;
+    lastEpNum  = episodeNum;
+    skipped    = { op: false, ed: false, recap: false };
+
+    if (!times) {
+      statusMsg = '⚠️ No skip data for this episode';
+    } else {
+      const parts = [];
+      if (times.op)    parts.push(`OP ${fmt(times.op.startTime)}–${fmt(times.op.endTime)}`);
+      if (times.recap) parts.push(`Recap ${fmt(times.recap.startTime)}–${fmt(times.recap.endTime)}`);
+      if (times.ed)    parts.push(`ED ${fmt(times.ed.startTime)}–${fmt(times.ed.endTime)}`);
+      statusMsg = parts.length ? '✅ ' + parts.join('  |  ') : '⚠️ No segments found';
+    }
+    updateStatus();
+  }
+
+  function fmt(s) {
+    const m = Math.floor(s / 60), sec = Math.round(s % 60);
+    return `${m}:${String(sec).padStart(2,'0')}`;
+  }
+
+
+  // ─── Skip tick (runs every 500ms) ─────────────────────────────────────────────
+  function tick() {
+    if (!cfg.enabled || !skipTimes) return;
+    const v = getVideo();
+    if (!v || isNaN(v.currentTime)) return;
     const t = v.currentTime;
 
-    // Try native buttons first
-    clickNativeButtons();
+    if (cfg.skipRecap && skipTimes.recap && !skipped.recap) {
+      const { startTime, endTime } = skipTimes.recap;
+      if (t >= startTime && t < endTime) { skipped.recap = true; seekTo(endTime); return; }
+    }
+    if (cfg.skipIntro && skipTimes.op && !skipped.op) {
+      const { startTime, endTime } = skipTimes.op;
+      if (t >= startTime && t < endTime) { skipped.op = true; seekTo(endTime); return; }
+    }
+    if (cfg.skipOutro && skipTimes.ed && !skipped.ed) {
+      const { startTime, endTime } = skipTimes.ed;
+      if (t >= startTime && t < endTime) { skipped.ed = true; seekTo(endTime); return; }
+    }
 
-    // Time-based seeking fallback
-    if (cfg.skipRecap && !skippedRecap && t >= cfg.recapStart && t < cfg.recapEnd) {
-      skippedRecap = true;
-      seekTo(cfg.recapEnd);
-    }
-    if (cfg.skipIntro && !skippedIntro && t >= cfg.introStart && t < cfg.introEnd) {
-      skippedIntro = true;
-      seekTo(cfg.introEnd);
-    }
-    if (cfg.skipOutro && !skippedOutro && t >= cfg.outroStart && t < cfg.outroEnd) {
-      skippedOutro = true;
-      seekTo(cfg.outroEnd);
-    }
+    // Also click any native CR skip buttons in case they appear
+    document.querySelectorAll('button').forEach(btn => {
+      if (btn.offsetParent === null) return;
+      const lbl = (btn.innerText || '').toLowerCase();
+      if (cfg.skipIntro && (lbl.includes('skip intro') || lbl.includes('skip opening'))) btn.click();
+      if (cfg.skipRecap && lbl.includes('skip recap')) btn.click();
+      if (cfg.skipOutro && (lbl.includes('skip credits') || lbl.includes('skip outro'))) btn.click();
+    });
   }
 
   setInterval(tick, 500);
 
-  // ─── SPA re-arm ───────────────────────────────────────────────────────────────
-  let lastUrl = location.href;
+  // ─── SPA navigation watcher ───────────────────────────────────────────────────
   new MutationObserver(() => {
     if (location.href !== lastUrl) {
-      lastUrl = location.href;
-      resetSkipFlags();
+      lastUrl   = location.href;
+      skipTimes = null;
+      skipped   = { op: false, ed: false, recap: false };
+      lastEpNum = null;
+      statusMsg = 'New episode detected, looking up…';
+      updateStatus();
+      // Wait for page to populate metadata then lookup
+      setTimeout(() => lookupEpisode(), 2000);
+      setTimeout(() => lookupEpisode(), 5000); // retry if metadata slow
     }
   }).observe(document, { subtree: true, childList: true });
 
-  // ═══════════════════════════════════════════════════════════════════════════════
-  // ─── GUI ──────────────────────────────────────────────────────────────────────
-  // ═══════════════════════════════════════════════════════════════════════════════
 
-  const COLORS = {
-    bg:       '#1a1a2e',
-    surface:  '#16213e',
-    accent:   '#f47521',   // CR orange
-    accentHover: '#ff8c3a',
-    text:     '#ffffff',
-    subtext:  '#a0a0b0',
-    border:   '#2a2a4a',
-    green:    '#4caf50',
-    red:      '#f44336',
-    toggle_on:  '#f47521',
-    toggle_off: '#444466',
+  // ═══════════════════════════════════════════════════════════════════════════════
+  //  GUI
+  // ═══════════════════════════════════════════════════════════════════════════════
+  const C = {
+    bg: '#0f0f1a', surface: '#1a1a2e', accent: '#f47521',
+    accentHov: '#ff9040', text: '#fff', sub: '#9090b0',
+    border: '#252540', green: '#4caf50', red: '#f44336',
+    ton: '#f47521', toff: '#383858',
   };
 
-  const style = document.createElement('style');
-  style.textContent = `
-    #cr-skip-fab {
-      position: fixed;
-      bottom: 28px;
-      right: 28px;
-      z-index: 2147483647;
-      width: 52px;
-      height: 52px;
-      border-radius: 50%;
-      background: ${COLORS.accent};
-      border: none;
-      cursor: pointer;
-      box-shadow: 0 4px 20px rgba(244,117,33,0.5);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      transition: transform 0.2s, background 0.2s, box-shadow 0.2s;
-      font-size: 22px;
-      color: #fff;
-      user-select: none;
-    }
-    #cr-skip-fab:hover {
-      background: ${COLORS.accentHover};
-      transform: scale(1.1);
-      box-shadow: 0 6px 28px rgba(244,117,33,0.7);
-    }
-    #cr-skip-fab.off {
-      background: #444466;
-      box-shadow: 0 4px 16px rgba(0,0,0,0.4);
-    }
-    #cr-skip-panel {
-      position: fixed;
-      bottom: 92px;
-      right: 28px;
-      z-index: 2147483646;
-      width: 310px;
-      background: ${COLORS.bg};
-      border: 1px solid ${COLORS.border};
-      border-radius: 14px;
-      box-shadow: 0 8px 40px rgba(0,0,0,0.7);
-      color: ${COLORS.text};
-      font-family: 'Segoe UI', Arial, sans-serif;
-      font-size: 13px;
-      overflow: hidden;
-      display: none;
-      flex-direction: column;
-    }
-    #cr-skip-panel.open { display: flex; }
-    .cr-panel-header {
-      background: ${COLORS.surface};
-      padding: 14px 16px 12px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      border-bottom: 1px solid ${COLORS.border};
-    }
-    .cr-panel-header-title {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      font-weight: 700;
-      font-size: 14px;
-      color: ${COLORS.accent};
-      letter-spacing: 0.3px;
-    }
-    .cr-panel-header-title span.logo { font-size: 18px; }
-    .cr-close-btn {
-      background: none;
-      border: none;
-      color: ${COLORS.subtext};
-      cursor: pointer;
-      font-size: 18px;
-      line-height: 1;
-      padding: 0;
-      transition: color 0.15s;
-    }
-    .cr-close-btn:hover { color: ${COLORS.text}; }
-    .cr-panel-body { padding: 14px 16px; display: flex; flex-direction: column; gap: 12px; }
-    .cr-row {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 10px;
-    }
-    .cr-row-label {
-      font-size: 13px;
-      color: ${COLORS.text};
-      font-weight: 500;
-    }
-    .cr-row-sub {
-      font-size: 11px;
-      color: ${COLORS.subtext};
-      margin-top: 1px;
-    }
-    .cr-toggle {
-      position: relative;
-      width: 40px;
-      height: 22px;
-      flex-shrink: 0;
-    }
-    .cr-toggle input { opacity: 0; width: 0; height: 0; }
-    .cr-toggle-slider {
-      position: absolute;
-      inset: 0;
-      border-radius: 22px;
-      background: ${COLORS.toggle_off};
-      cursor: pointer;
-      transition: background 0.2s;
-    }
-    .cr-toggle-slider::before {
-      content: '';
-      position: absolute;
-      left: 3px; top: 3px;
-      width: 16px; height: 16px;
-      border-radius: 50%;
-      background: white;
-      transition: transform 0.2s;
-    }
-    .cr-toggle input:checked + .cr-toggle-slider { background: ${COLORS.toggle_on}; }
-    .cr-toggle input:checked + .cr-toggle-slider::before { transform: translateX(18px); }
-    .cr-divider {
-      height: 1px;
-      background: ${COLORS.border};
-      margin: 2px 0;
-    }
-    .cr-section-title {
-      font-size: 10px;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 1px;
-      color: ${COLORS.subtext};
-      margin-bottom: 2px;
-    }
-    .cr-time-row {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      justify-content: space-between;
-    }
-    .cr-time-label {
-      font-size: 12px;
-      color: ${COLORS.subtext};
-      min-width: 90px;
-    }
-    .cr-time-input {
-      background: ${COLORS.surface};
-      border: 1px solid ${COLORS.border};
-      border-radius: 6px;
-      color: ${COLORS.text};
-      font-size: 12px;
-      padding: 4px 8px;
-      width: 68px;
-      text-align: center;
-      outline: none;
-      transition: border-color 0.15s;
-    }
-    .cr-time-input:focus { border-color: ${COLORS.accent}; }
-    .cr-status-bar {
-      background: ${COLORS.surface};
-      padding: 8px 16px;
-      border-top: 1px solid ${COLORS.border};
-      font-size: 11px;
-      color: ${COLORS.subtext};
-      display: flex;
-      align-items: center;
-      gap: 6px;
-    }
-    .cr-dot {
-      width: 7px; height: 7px;
-      border-radius: 50%;
-      flex-shrink: 0;
-    }
-    .cr-dot.on  { background: ${COLORS.green}; }
-    .cr-dot.off { background: ${COLORS.red}; }
-    .cr-group { display: flex; flex-direction: column; gap: 8px; }
-    .cr-collapse { display: flex; flex-direction: column; gap: 8px; }
-    .cr-collapse.hidden { display: none; }
-    .cr-expand-btn {
-      background: none;
-      border: none;
-      color: ${COLORS.accent};
-      font-size: 11px;
-      cursor: pointer;
-      padding: 0;
-      text-align: left;
-      text-decoration: underline;
-    }
+  const css = document.createElement('style');
+  css.textContent = `
+    #crs-fab{position:fixed;bottom:26px;right:26px;z-index:2147483647;width:50px;height:50px;
+      border-radius:50%;background:${C.accent};border:none;cursor:pointer;
+      box-shadow:0 4px 20px rgba(244,117,33,.55);display:flex;align-items:center;
+      justify-content:center;font-size:20px;color:#fff;transition:all .2s;user-select:none;}
+    #crs-fab:hover{background:${C.accentHov};transform:scale(1.1);}
+    #crs-fab.off{background:#383858;box-shadow:0 4px 14px rgba(0,0,0,.4);}
+    #crs-panel{position:fixed;bottom:88px;right:26px;z-index:2147483646;width:320px;
+      background:${C.bg};border:1px solid ${C.border};border-radius:14px;
+      box-shadow:0 10px 40px rgba(0,0,0,.75);color:${C.text};
+      font-family:'Segoe UI',Arial,sans-serif;font-size:13px;display:none;flex-direction:column;}
+    #crs-panel.open{display:flex;}
+    .crs-head{background:${C.surface};padding:13px 15px 11px;display:flex;
+      align-items:center;justify-content:space-between;border-bottom:1px solid ${C.border};
+      border-radius:14px 14px 0 0;}
+    .crs-title{font-weight:700;font-size:14px;color:${C.accent};display:flex;align-items:center;gap:7px;}
+    .crs-x{background:none;border:none;color:${C.sub};cursor:pointer;font-size:17px;
+      line-height:1;padding:0;transition:color .15s;}
+    .crs-x:hover{color:${C.text};}
+    .crs-body{padding:13px 15px;display:flex;flex-direction:column;gap:11px;}
+    .crs-row{display:flex;align-items:center;justify-content:space-between;gap:10px;}
+    .crs-lbl{font-size:13px;font-weight:500;}
+    .crs-sub{font-size:11px;color:${C.sub};margin-top:1px;}
+    .crs-tog{position:relative;width:38px;height:21px;flex-shrink:0;}
+    .crs-tog input{opacity:0;width:0;height:0;}
+    .crs-sl{position:absolute;inset:0;border-radius:21px;background:${C.toff};cursor:pointer;transition:background .2s;}
+    .crs-sl::before{content:'';position:absolute;left:3px;top:3px;width:15px;height:15px;
+      border-radius:50%;background:#fff;transition:transform .2s;}
+    .crs-tog input:checked+.crs-sl{background:${C.ton};}
+    .crs-tog input:checked+.crs-sl::before{transform:translateX(17px);}
+    .crs-div{height:1px;background:${C.border};}
+    .crs-sec{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:${C.sub};}
+    .crs-status{background:${C.surface};padding:9px 15px;border-top:1px solid ${C.border};
+      font-size:11px;color:${C.sub};display:flex;align-items:flex-start;gap:7px;
+      border-radius:0 0 14px 14px;word-break:break-word;}
+    .crs-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;margin-top:2px;}
+    .crs-dot.on{background:${C.green};}.crs-dot.off{background:${C.red};}
+    .crs-btn{background:${C.accent};border:none;color:#fff;border-radius:7px;
+      padding:6px 12px;font-size:12px;cursor:pointer;font-weight:600;transition:background .2s;}
+    .crs-btn:hover{background:${C.accentHov};}
+    .crs-btn.sec{background:${C.surface};border:1px solid ${C.border};color:${C.sub};}
+    .crs-btn.sec:hover{color:${C.text};border-color:${C.accent};}
   `;
-  document.head.appendChild(style);
+  document.head.appendChild(css);
 
-  // ─── FAB (floating circle button) ────────────────────────────────────────────
+
+  // ─── FAB ──────────────────────────────────────────────────────────────────────
   const fab = document.createElement('button');
-  fab.id = 'cr-skip-fab';
-  fab.title = 'CR Auto-Skip Settings';
-  fab.innerHTML = '⏭';
+  fab.id = 'crs-fab'; fab.title = 'CR Smart-Skip'; fab.innerHTML = '⏭';
   if (!cfg.enabled) fab.classList.add('off');
   document.body.appendChild(fab);
 
-  // ─── Panel ────────────────────────────────────────────────────────────────────
+  // ─── Panel HTML ───────────────────────────────────────────────────────────────
   const panel = document.createElement('div');
-  panel.id = 'cr-skip-panel';
+  panel.id = 'crs-panel';
   panel.innerHTML = `
-    <div class="cr-panel-header">
-      <div class="cr-panel-header-title">
-        <span class="logo">⏭</span> CR Auto-Skip
-      </div>
-      <button class="cr-close-btn" id="cr-close">✕</button>
+    <div class="crs-head">
+      <div class="crs-title">⏭ CR Smart-Skip</div>
+      <button class="crs-x" id="crs-close">✕</button>
     </div>
-    <div class="cr-panel-body">
-
-      <!-- Master toggle -->
-      <div class="cr-row">
-        <div>
-          <div class="cr-row-label">Auto-Skip Enabled</div>
-          <div class="cr-row-sub">Master on/off switch</div>
-        </div>
-        <label class="cr-toggle">
-          <input type="checkbox" id="cr-tog-enabled" ${cfg.enabled ? 'checked' : ''}>
-          <span class="cr-toggle-slider"></span>
-        </label>
+    <div class="crs-body">
+      <div class="crs-row">
+        <div><div class="crs-lbl">Auto-Skip Enabled</div>
+          <div class="crs-sub">Master on/off</div></div>
+        <label class="crs-tog">
+          <input type="checkbox" id="crs-enabled" ${cfg.enabled?'checked':''}>
+          <span class="crs-sl"></span></label>
       </div>
-
-      <div class="cr-divider"></div>
-
-      <!-- Skip toggles -->
-      <div class="cr-section-title">What to skip</div>
-      <div class="cr-group">
-        <div class="cr-row">
-          <div class="cr-row-label">Skip Recap</div>
-          <label class="cr-toggle">
-            <input type="checkbox" id="cr-tog-recap" ${cfg.skipRecap ? 'checked' : ''}>
-            <span class="cr-toggle-slider"></span>
-          </label>
-        </div>
-        <div class="cr-row">
-          <div class="cr-row-label">Skip Opening / Intro</div>
-          <label class="cr-toggle">
-            <input type="checkbox" id="cr-tog-intro" ${cfg.skipIntro ? 'checked' : ''}>
-            <span class="cr-toggle-slider"></span>
-          </label>
-        </div>
-        <div class="cr-row">
-          <div class="cr-row-label">Skip Credits / Outro</div>
-          <label class="cr-toggle">
-            <input type="checkbox" id="cr-tog-outro" ${cfg.skipOutro ? 'checked' : ''}>
-            <span class="cr-toggle-slider"></span>
-          </label>
-        </div>
+      <div class="crs-div"></div>
+      <div class="crs-sec">What to skip</div>
+      <div class="crs-row">
+        <div class="crs-lbl">Skip Recap</div>
+        <label class="crs-tog">
+          <input type="checkbox" id="crs-recap" ${cfg.skipRecap?'checked':''}>
+          <span class="crs-sl"></span></label>
       </div>
-
-      <div class="cr-divider"></div>
-
-      <!-- Time settings -->
-      <div class="cr-section-title">Skip times (seconds)</div>
-      <button class="cr-expand-btn" id="cr-expand-btn">▶ Show / hide time settings</button>
-      <div class="cr-collapse hidden" id="cr-collapse">
-        <div class="cr-group">
-          <div class="cr-section-title" style="margin-top:4px">Recap window</div>
-          <div class="cr-time-row">
-            <span class="cr-time-label">Start at (s)</span>
-            <input class="cr-time-input" id="cr-recap-start" type="number" min="0" value="${cfg.recapStart}">
-          </div>
-          <div class="cr-time-row">
-            <span class="cr-time-label">Seek to (s)</span>
-            <input class="cr-time-input" id="cr-recap-end" type="number" min="0" value="${cfg.recapEnd}">
-          </div>
-
-          <div class="cr-section-title" style="margin-top:4px">Intro / Opening window</div>
-          <div class="cr-time-row">
-            <span class="cr-time-label">Start at (s)</span>
-            <input class="cr-time-input" id="cr-intro-start" type="number" min="0" value="${cfg.introStart}">
-          </div>
-          <div class="cr-time-row">
-            <span class="cr-time-label">Seek to (s)</span>
-            <input class="cr-time-input" id="cr-intro-end" type="number" min="0" value="${cfg.introEnd}">
-          </div>
-
-          <div class="cr-section-title" style="margin-top:4px">Credits / Outro window</div>
-          <div class="cr-time-row">
-            <span class="cr-time-label">Start at (s)</span>
-            <input class="cr-time-input" id="cr-outro-start" type="number" min="0" value="${cfg.outroStart}">
-          </div>
-          <div class="cr-time-row">
-            <span class="cr-time-label">Seek to (s)</span>
-            <input class="cr-time-input" id="cr-outro-end" type="number" min="0" value="${cfg.outroEnd}">
-          </div>
-        </div>
+      <div class="crs-row">
+        <div class="crs-lbl">Skip Opening / Intro</div>
+        <label class="crs-tog">
+          <input type="checkbox" id="crs-intro" ${cfg.skipIntro?'checked':''}>
+          <span class="crs-sl"></span></label>
       </div>
-
+      <div class="crs-row">
+        <div class="crs-lbl">Skip Credits / Outro</div>
+        <label class="crs-tog">
+          <input type="checkbox" id="crs-outro" ${cfg.skipOutro?'checked':''}>
+          <span class="crs-sl"></span></label>
+      </div>
+      <div class="crs-div"></div>
+      <div class="crs-row" style="gap:8px">
+        <button class="crs-btn" id="crs-refresh" title="Re-fetch timestamps for current episode">🔄 Re-detect</button>
+        <button class="crs-btn sec" id="crs-reset" title="Force skip flags reset (re-skips current episode)">↩ Re-arm</button>
+      </div>
     </div>
-    <div class="cr-status-bar">
-      <span class="cr-dot ${cfg.enabled ? 'on' : 'off'}" id="cr-status-dot"></span>
-      <span id="cr-status-text">${cfg.enabled ? 'Active — watching for skips' : 'Disabled'}</span>
-    </div>
-  `;
+    <div class="crs-status">
+      <span class="crs-dot ${cfg.enabled?'on':'off'}" id="crs-dot"></span>
+      <span id="crs-stxt">Initialising…</span>
+    </div>`;
   document.body.appendChild(panel);
 
-  // ─── GUI interactions ─────────────────────────────────────────────────────────
 
-  // Open / close panel
-  fab.addEventListener('click', () => {
-    panel.classList.toggle('open');
-  });
-  document.getElementById('cr-close').addEventListener('click', () => {
-    panel.classList.remove('open');
-  });
-  // Close panel if clicking outside
-  document.addEventListener('click', (e) => {
-    if (!panel.contains(e.target) && e.target !== fab) {
-      panel.classList.remove('open');
-    }
-  });
-
-  // Expand / collapse time settings
-  document.getElementById('cr-expand-btn').addEventListener('click', () => {
-    const col = document.getElementById('cr-collapse');
-    const btn = document.getElementById('cr-expand-btn');
-    col.classList.toggle('hidden');
-    btn.textContent = col.classList.contains('hidden')
-      ? '▶ Show / hide time settings'
-      : '▼ Hide time settings';
-  });
-
+  // ─── GUI wiring ───────────────────────────────────────────────────────────────
   function updateStatus() {
-    const dot  = document.getElementById('cr-status-dot');
-    const txt  = document.getElementById('cr-status-text');
-    dot.className = 'cr-dot ' + (cfg.enabled ? 'on' : 'off');
-    txt.textContent = cfg.enabled ? 'Active — watching for skips' : 'Disabled';
+    const dot = document.getElementById('crs-dot');
+    const txt = document.getElementById('crs-stxt');
+    if (dot) dot.className = 'crs-dot ' + (cfg.enabled ? 'on' : 'off');
+    if (txt) txt.textContent = statusMsg;
     fab.classList.toggle('off', !cfg.enabled);
     fab.innerHTML = cfg.enabled ? '⏭' : '⏸';
   }
 
-  function bindToggle(id, key, cb) {
+  fab.addEventListener('click', () => panel.classList.toggle('open'));
+  document.getElementById('crs-close').addEventListener('click', () => panel.classList.remove('open'));
+  document.addEventListener('click', e => {
+    if (!panel.contains(e.target) && e.target !== fab) panel.classList.remove('open');
+  });
+
+  function bindTog(id, key, cb) {
     document.getElementById(id).addEventListener('change', function () {
-      cfg[key] = this.checked;
-      saveCfg();
-      if (cb) cb();
+      cfg[key] = this.checked; saveCfg(); if (cb) cb();
     });
   }
 
-  function bindNumber(id, key) {
-    document.getElementById(id).addEventListener('change', function () {
-      const v = parseFloat(this.value);
-      if (!isNaN(v) && v >= 0) { cfg[key] = v; saveCfg(); }
-    });
-  }
+  bindTog('crs-enabled', 'enabled', () => {
+    updateStatus();
+    skipped = { op: false, ed: false, recap: false };
+    if (cfg.enabled && !skipTimes) lookupEpisode();
+  });
+  bindTog('crs-recap', 'skipRecap');
+  bindTog('crs-intro', 'skipIntro');
+  bindTog('crs-outro', 'skipOutro');
 
-  bindToggle('cr-tog-enabled', 'enabled', () => { updateStatus(); resetSkipFlags(); });
-  bindToggle('cr-tog-recap',   'skipRecap',  () => resetSkipFlags());
-  bindToggle('cr-tog-intro',   'skipIntro',  () => resetSkipFlags());
-  bindToggle('cr-tog-outro',   'skipOutro',  () => resetSkipFlags());
+  document.getElementById('crs-refresh').addEventListener('click', () => {
+    skipTimes = null; lastEpNum = null; lastMalId = null;
+    statusMsg = '🔍 Re-detecting…'; updateStatus();
+    lookupEpisode(true);
+  });
+  document.getElementById('crs-reset').addEventListener('click', () => {
+    skipped = { op: false, ed: false, recap: false };
+    statusMsg = '↩ Re-armed — will skip again'; updateStatus();
+  });
 
-  bindNumber('cr-recap-start',  'recapStart');
-  bindNumber('cr-recap-end',    'recapEnd');
-  bindNumber('cr-intro-start',  'introStart');
-  bindNumber('cr-intro-end',    'introEnd');
-  bindNumber('cr-outro-start',  'outroStart');
-  bindNumber('cr-outro-end',    'outroEnd');
-
+  // ─── Boot ─────────────────────────────────────────────────────────────────────
   updateStatus();
+  // On a watch page: start lookup after DOM settles
+  if (location.pathname.includes('/watch/')) {
+    setTimeout(() => lookupEpisode(), 2000);
+    setTimeout(() => lookupEpisode(), 6000);
+  } else {
+    statusMsg = 'Open an episode to activate';
+    updateStatus();
+  }
 
-  console.log('[CR Auto-Skip v2] Loaded ✅  — click the ⏭ circle to open settings');
+  log('v3 loaded ✅');
 })();
